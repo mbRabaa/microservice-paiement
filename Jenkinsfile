@@ -46,8 +46,6 @@ pipeline {
             steps {
                 dir('backend') {
                     sh 'npm ci --prefer-offline --audit false'
-                    // Installation spécifique de jest-junit
-                    sh 'npm install --save-dev jest-junit'
                 }
             }
         }
@@ -63,33 +61,17 @@ pipeline {
         stage('Run Tests') {
             steps {
                 dir('backend') {
-                    // Commande de test modifiée avec le bon reporter
-                    sh '''
-                        mkdir -p test-results
-                        NODE_ENV=test SKIP_DB_CONNECTION=true jest \
-                          --ci \
-                          --coverage \
-                          --reporters=default \
-                          --reporters=jest-junit \
-                          --testResultsProcessor="jest-junit"
-                    '''
+                    sh 'npm run test:ci'
                 }
             }
             post {
                 always {
                     junit 'backend/test-results/junit.xml'
-                    // Vérification de l'existence du répertoire avant publication
-                    script {
-                        if (fileExists('backend/coverage/lcov-report/index.html')) {
-                            publishHTML(target: [
-                                reportDir: 'backend/coverage/lcov-report',
-                                reportFiles: 'index.html',
-                                reportName: 'Coverage Report'
-                            ])
-                        } else {
-                            echo "Le rapport de couverture n'existe pas, skip..."
-                        }
-                    }
+                    publishHTML(target: [
+                        reportDir: 'backend/coverage/lcov-report',
+                        reportFiles: 'index.html',
+                        reportName: 'Coverage Report'
+                    ])
                 }
             }
         }
@@ -109,12 +91,12 @@ pipeline {
                             passwordVariable: 'DOCKER_PASS'
                         )]) {
                             sh """
-                                docker login -u $DOCKER_USER -p $DOCKER_PASS
-                                docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
-                                docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+                                docker login -u $DOCKER_USER -p $DOCKER_PASS ${env.DOCKER_REGISTRY}
+                                docker build -t ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
                                 docker push ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
                                 
-                                docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:latest
+                                # Tag latest
+                                docker tag ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:latest
                                 docker push ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:latest
                             """
                         }
@@ -126,20 +108,22 @@ pipeline {
         stage('Deploy Container') {
             steps {
                 script {
+                    // Arrêter et supprimer les anciens conteneurs
                     sh "docker stop ${env.CONTAINER_NAME} || true"
                     sh "docker rm ${env.CONTAINER_NAME} || true"
                     
+                    // Démarrer un nouveau conteneur
                     sh """
                         docker run -d \
                             --name ${env.CONTAINER_NAME} \
                             -p ${env.SERVICE_PORT}:${env.SERVICE_PORT} \
                             -e NODE_ENV=production \
                             -e PORT=${env.SERVICE_PORT} \
-                            ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+                            ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
                     """
                     
-                    sleep 5
-                    sh "docker logs ${env.CONTAINER_NAME}"
+                    // Vérification du conteneur
+                    sh "docker ps -a | grep ${env.CONTAINER_NAME}"
                 }
             }
         }
@@ -147,19 +131,20 @@ pipeline {
         stage('Health Check') {
             steps {
                 script {
+                    // Attendre que le service soit prêt
                     sh """
                         attempts=0
                         max_attempts=30
-                        while ! curl -f -s http://localhost:${env.SERVICE_PORT}/api/health; do
+                        while ! curl -s http://localhost:${env.SERVICE_PORT}/api/health; do
                             if [ \$attempts -eq \$max_attempts ]; then
                                 echo "Le service ne répond pas après \$max_attempts tentatives"
                                 exit 1
                             fi
                             attempts=\$((attempts+1))
-                            sleep 2
+                            sleep 1
                         done
-                        echo "✅ Health check passed"
                     """
+                    echo "Le service est opérationnel sur le port ${env.SERVICE_PORT}"
                 }
             }
         }
@@ -168,23 +153,26 @@ pipeline {
     post {
         always {
             script {
-                archiveArtifacts artifacts: '**/test-results/*.xml', allowEmptyArchive: true
-                cleanWs()
+                if (env.NODE_NAME != null) {
+                    cleanWs()
+                }
                 currentBuild.description = "v${env.BUILD_NUMBER}"
             }
         }
         success {
             script {
                 echo """
-                ✅ Déploiement réussi!
-                URL: http://localhost:${env.SERVICE_PORT}
-                Image: ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+                ✅ Build réussi!
+                Image Docker: ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+                Conteneur: ${env.CONTAINER_NAME}
+                Port: ${env.SERVICE_PORT}
                 """
             }
         }
         failure {
             script {
                 echo '❌ Échec du pipeline'
+                // Nettoyage des conteneurs en cas d'échec
                 sh "docker stop ${env.CONTAINER_NAME} || true"
                 sh "docker rm ${env.CONTAINER_NAME} || true"
             }
