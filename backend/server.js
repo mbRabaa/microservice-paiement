@@ -33,8 +33,13 @@ pool.on('error', (err) => {
   console.error('Erreur de connexion à la base de données:', err);
 });
 
-// Test de connexion à la base
+// Test de connexion à la base (modifié pour les tests)
 async function testConnection() {
+  if (process.env.SKIP_DB_CONNECTION === 'true') {
+    console.log('Skipping DB connection in test mode');
+    return;
+  }
+
   let client;
   try {
     client = await pool.connect();
@@ -42,12 +47,12 @@ async function testConnection() {
     console.log('Connexion à la base réussie:', res.rows[0]);
   } catch (err) {
     console.error('Échec de connexion à la base:', err);
-    process.exit(1);
+    if (process.env.NODE_ENV !== 'test') process.exit(1);
+    throw err; // Pour les tests
   } finally {
     if (client) client.release();
   }
 }
-testConnection();
 
 // Middleware de vérification de la base
 app.use(async (req, res, next) => {
@@ -121,7 +126,7 @@ app.post('/api/paiements', async (req, res) => {
       req.body.client_email,
       req.body.client_name,
       req.body.trajet,
-      req.body.card_last4?.replace(/\D/g, '').slice(-4), // Nettoyage des numéros de carte
+      req.body.card_last4?.replace(/\D/g, '').slice(-4),
       req.body.card_brand || null
     ]);
 
@@ -130,14 +135,14 @@ app.post('/api/paiements', async (req, res) => {
     res.status(201).json({
       success: true,
       payment: rows[0],
-      receipt_url: `/api/paiements/${rows[0].id}/receipt` // Bonus: URL pour reçu
+      receipt_url: `/api/paiements/${rows[0].id}/receipt`
     });
 
   } catch (error) {
     console.error('Erreur SQL:', {
       message: error.message,
       stack: error.stack,
-      query: error.query // Spécifique à pg
+      query: error.query
     });
     
     res.status(500).json({
@@ -146,7 +151,7 @@ app.post('/api/paiements', async (req, res) => {
       details: process.env.NODE_ENV === 'development' 
         ? error.message 
         : undefined,
-      code: error.code // Code d'erreur PostgreSQL si disponible
+      code: error.code
     });
   }
 });
@@ -169,18 +174,43 @@ app.use((err, req, res, next) => {
   res.status(500).json({
     success: false,
     error: 'Erreur interne du serveur',
-    timestamp: new Date().toISOString(),
-    requestId: req.id // Si vous utilisez un middleware de request ID
+    timestamp: new Date().toISOString()
   });
 });
 
-// Démarrer le serveur
-app.listen(port, () => {
-  console.log(`Serveur de paiement démarré sur http://localhost:${port}`);
-  console.log(`Environnement: ${process.env.NODE_ENV || 'development'}`);
-  console.log('Configuration CORS:', {
-    origin: process.env.FRONTEND_URL || 'http://localhost:8080'
+// Démarrer le serveur conditionnellement
+let server;
+if (require.main === module) {
+  testConnection().then(() => {
+    server = app.listen(port, () => {
+      console.log(`Serveur de paiement démarré sur http://localhost:${port}`);
+      console.log(`Environnement: ${process.env.NODE_ENV || 'development'}`);
+      console.log('Configuration CORS:', {
+        origin: process.env.FRONTEND_URL || 'http://localhost:8080'
+      });
+    });
+  }).catch(err => {
+    console.error('Failed to start server:', err);
+    process.exit(1);
   });
-});
+}
 
-module.exports = app;
+// Export pour les tests
+module.exports = {
+  app,
+  pool,
+  start: async () => {
+    await testConnection();
+    if (!server) {
+      server = app.listen(port);
+    }
+    return server;
+  },
+  stop: async () => {
+    if (server) {
+      await new Promise(resolve => server.close(resolve));
+    }
+    await pool.end();
+  },
+  testConnection
+};
