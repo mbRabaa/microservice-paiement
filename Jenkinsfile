@@ -6,13 +6,13 @@ pipeline {
         SKIP_DB_CONNECTION = 'true'
         JEST_JUNIT_OUTPUT = 'test-results/junit.xml'
         DOCKER_IMAGE = 'microservice-paiement'
-        DOCKER_REGISTRY = 'docker.io/mbrabaa2023' 
-        // Modification de la construction du tag Docker
+        DOCKER_REGISTRY = 'docker.io/mbrabaa2023'
         DOCKER_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT?.take(7) ?: 'unknown'}"
+        CONTAINER_NAME = 'microservice-paiement-container'
+        SERVICE_PORT = '3002'
     }
     
     options {
-        skipDefaultCheckout(false) // Changé à false pour éviter les problèmes
         timeout(time: 30, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '5'))
     }
@@ -20,12 +20,11 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: '*/main']],
-                    extensions: [],
-                    userRemoteConfigs: [[url: 'https://github.com/mbRabaa/microservice-paiement']]
-                ])
+                checkout scm
+                sh 'git rev-parse HEAD > .git/commit-id'
+                script {
+                    env.GIT_COMMIT = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                }
             }
         }
         
@@ -105,12 +104,55 @@ pipeline {
                 }
             }
         }
+        
+        stage('Deploy Container') {
+            steps {
+                script {
+                    // Arrêter et supprimer les anciens conteneurs
+                    sh "docker stop ${env.CONTAINER_NAME} || true"
+                    sh "docker rm ${env.CONTAINER_NAME} || true"
+                    
+                    // Démarrer un nouveau conteneur
+                    sh """
+                        docker run -d \
+                            --name ${env.CONTAINER_NAME} \
+                            -p ${env.SERVICE_PORT}:${env.SERVICE_PORT} \
+                            -e NODE_ENV=production \
+                            -e PORT=${env.SERVICE_PORT} \
+                            ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+                    """
+                    
+                    // Vérification du conteneur
+                    sh "docker ps -a | grep ${env.CONTAINER_NAME}"
+                }
+            }
+        }
+        
+        stage('Health Check') {
+            steps {
+                script {
+                    // Attendre que le service soit prêt
+                    sh """
+                        attempts=0
+                        max_attempts=30
+                        while ! curl -s http://localhost:${env.SERVICE_PORT}/api/health; do
+                            if [ \$attempts -eq \$max_attempts ]; then
+                                echo "Le service ne répond pas après \$max_attempts tentatives"
+                                exit 1
+                            fi
+                            attempts=\$((attempts+1))
+                            sleep 1
+                        done
+                    """
+                    echo "Le service est opérationnel sur le port ${env.SERVICE_PORT}"
+                }
+            }
+        }
     }
     
     post {
         always {
             script {
-                // Nettoyage sécurisé avec vérification du nœud
                 if (env.NODE_NAME != null) {
                     cleanWs()
                 }
@@ -122,11 +164,18 @@ pipeline {
                 echo """
                 ✅ Build réussi!
                 Image Docker: ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+                Conteneur: ${env.CONTAINER_NAME}
+                Port: ${env.SERVICE_PORT}
                 """
             }
         }
         failure {
-            echo '❌ Échec du pipeline'
+            script {
+                echo '❌ Échec du pipeline'
+                // Nettoyage des conteneurs en cas d'échec
+                sh "docker stop ${env.CONTAINER_NAME} || true"
+                sh "docker rm ${env.CONTAINER_NAME} || true"
+            }
         }
     }
 }
