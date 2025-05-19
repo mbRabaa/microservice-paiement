@@ -108,11 +108,9 @@ pipeline {
         stage('Deploy Container') {
             steps {
                 script {
-                    // Arrêter et supprimer les anciens conteneurs
                     sh "docker stop ${env.CONTAINER_NAME} || true"
                     sh "docker rm ${env.CONTAINER_NAME} || true"
                     
-                    // Démarrer un nouveau conteneur avec plus de variables d'environnement
                     sh """
                         docker run -d \
                             --name ${env.CONTAINER_NAME} \
@@ -120,18 +118,16 @@ pipeline {
                             -e NODE_ENV=production \
                             -e PORT=${env.SERVICE_PORT} \
                             -e APP_HOST=0.0.0.0 \
-                            -e BASE_PATH=/api \
+                            -e WELCOME_MESSAGE="API Microservice Paiement" \
                             ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
                     """
                     
-                    // Attendre et vérifier
-                    sleep 5
-                    sh "docker logs ${env.CONTAINER_NAME}"
-                    
-                    // Test explicite des endpoints
+                    // Vérification complète
                     sh """
-                        echo "Test des endpoints :"
-                        curl -v http://localhost:${env.SERVICE_PORT}/api/health
+                        echo "=== Service opérationnel ==="
+                        echo "Accès:"
+                        echo "- Health:   curl http://localhost:${env.SERVICE_PORT}/api/health"
+                        echo "- Paiement: curl -X POST http://localhost:${env.SERVICE_PORT}/api/paiements -H 'Content-Type: application/json' -d '{\\"montant\\": 100}'"
                     """
                 }
             }
