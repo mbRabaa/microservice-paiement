@@ -6,12 +6,13 @@ pipeline {
         SKIP_DB_CONNECTION = 'true'
         JEST_JUNIT_OUTPUT = 'test-results/junit.xml'
         DOCKER_IMAGE = 'microservice-paiement'
-        DOCKER_REGISTRY = 'docker.io/mbrabaa2023' 
-        DOCKER_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
+        DOCKER_REGISTRY = 'docker.io/votre-dockerhub-username' // Remplacez par votre vrai username
+        // Modification de la construction du tag Docker
+        DOCKER_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT?.take(7) ?: 'unknown'}"
     }
     
     options {
-        skipDefaultCheckout(true)
+        skipDefaultCheckout(false) // Changé à false pour éviter les problèmes
         timeout(time: 30, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '5'))
     }
@@ -19,15 +20,26 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                checkout scm
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/main']],
+                    extensions: [],
+                    userRemoteConfigs: [[url: 'https://github.com/mbRabaa/microservice-paiement']]
+                ])
             }
         }
         
         stage('Setup Environment') {
             steps {
-                sh 'node --version'
-                sh 'npm --version'
-                sh 'docker --version'
+                script {
+                    try {
+                        sh 'node --version'
+                        sh 'npm --version'
+                        sh 'docker --version'
+                    } catch (Exception e) {
+                        error("Erreur lors de la vérification des versions: ${e.message}")
+                    }
+                }
             }
         }
         
@@ -65,25 +77,29 @@ pipeline {
             }
         }
         
-        stage('Build Docker Image') {
+        stage('Build and Push Docker Image') {
+            when {
+                expression { 
+                    fileExists('backend/Dockerfile') 
+                }
+            }
             steps {
                 dir('backend') {
                     script {
-                        // Vérification que le Dockerfile existe bien
-                        if (!fileExists('Dockerfile')) {
-                            error("Dockerfile non trouvé dans le dossier backend")
-                        }
-                        
-                        // Build et push de l'image Docker
-                        docker.withRegistry("https://${env.DOCKER_REGISTRY}", 'docker-hub-creds') {
-                            def customImage = docker.build(
-                                "${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}"
-                            )
-                            customImage.push()
-                            
-                            // Tag supplémentaire 'latest'
-                            docker.image("${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}").tag('latest')
-                            docker.image("${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:latest").push()
+                        withCredentials([usernamePassword(
+                            credentialsId: 'docker-hub-creds',
+                            usernameVariable: 'DOCKER_USER',
+                            passwordVariable: 'DOCKER_PASS'
+                        )]) {
+                            sh """
+                                docker login -u $DOCKER_USER -p $DOCKER_PASS ${env.DOCKER_REGISTRY}
+                                docker build -t ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
+                                docker push ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+                                
+                                # Tag latest
+                                docker tag ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:latest
+                                docker push ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:latest
+                            """
                         }
                     }
                 }
@@ -93,21 +109,21 @@ pipeline {
     
     post {
         always {
-            cleanWs()
             script {
-                currentBuild.description = "v${env.BUILD_NUMBER} | ${env.GIT_COMMIT.take(7)}"
+                // Nettoyage sécurisé avec vérification du nœud
+                if (env.NODE_NAME != null) {
+                    cleanWs()
+                }
+                currentBuild.description = "v${env.BUILD_NUMBER}"
             }
         }
         success {
-            echo """
-            ✅ Build réussi!
-            Image Docker: ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
-            """
-            // Pour copier-coller la commande pull
-            echo """
-            Pour tester l'image localement:
-            docker pull ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
-            """
+            script {
+                echo """
+                ✅ Build réussi!
+                Image Docker: ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+                """
+            }
         }
         failure {
             echo '❌ Échec du pipeline'
