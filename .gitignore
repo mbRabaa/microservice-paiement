@@ -18,3 +18,6 @@ config/*.js        # Pour ignorer tous les fichiers JS dans un dossier config/
 
 # Système
 .DS_Store
+
+Dockerfile
+*.mdv

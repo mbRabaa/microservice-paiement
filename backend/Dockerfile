@@ -18,4 +18,4 @@ COPY . .
 EXPOSE 3002
 
 # Commande pour démarrer le service
-CMD ["npm", "start"]
+CMD ["node", "server.js"]
