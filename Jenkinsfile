@@ -2,7 +2,7 @@ pipeline {
     agent any
     
     environment {
-        NODE_ENV = 'test'
+        NODE_ENV = 'production'
         SKIP_DB_CONNECTION = 'true'
         JEST_JUNIT_OUTPUT = 'test-results/junit.xml'
         DOCKER_IMAGE = 'microservice-paiement'
@@ -10,6 +10,7 @@ pipeline {
         DOCKER_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT?.take(7) ?: 'unknown'}"
         CONTAINER_NAME = 'microservice-paiement-container'
         SERVICE_PORT = '3002'
+        APP_HOST = '0.0.0.0'
     }
     
     options {
@@ -95,7 +96,6 @@ pipeline {
                                 docker build -t ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
                                 docker push ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
                                 
-                                # Tag latest
                                 docker tag ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:latest
                                 docker push ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:latest
                             """
@@ -108,22 +108,26 @@ pipeline {
         stage('Deploy Container') {
             steps {
                 script {
-                    // Arrêter et supprimer les anciens conteneurs
+                    // Nettoyage des anciens conteneurs
                     sh "docker stop ${env.CONTAINER_NAME} || true"
                     sh "docker rm ${env.CONTAINER_NAME} || true"
                     
-                    // Démarrer un nouveau conteneur
+                    // Démarrage du conteneur avec toutes les variables nécessaires
                     sh """
                         docker run -d \
                             --name ${env.CONTAINER_NAME} \
                             -p ${env.SERVICE_PORT}:${env.SERVICE_PORT} \
-                            -e NODE_ENV=production \
+                            -e NODE_ENV=${env.NODE_ENV} \
                             -e PORT=${env.SERVICE_PORT} \
+                            -e SKIP_DB_CONNECTION=${env.SKIP_DB_CONNECTION} \
+                            -e APP_HOST=${env.APP_HOST} \
                             ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
                     """
                     
-                    // Vérification du conteneur
+                    // Attente et vérification
+                    sleep 5
                     sh "docker ps -a | grep ${env.CONTAINER_NAME}"
+                    sh "docker logs ${env.CONTAINER_NAME}"
                 }
             }
         }
@@ -131,20 +135,36 @@ pipeline {
         stage('Health Check') {
             steps {
                 script {
-                    // Attendre que le service soit prêt
+                    // Vérification complète de la santé de l'application
                     sh """
                         attempts=0
                         max_attempts=30
-                        while ! curl -s http://localhost:${env.SERVICE_PORT}/api/health; do
+                        while true; do
+                            response=\$(curl -s http://localhost:${env.SERVICE_PORT}/api/health || echo "FAIL")
+                            if echo "\$response" | grep -q '"success":true'; then
+                                echo "Health check successful: \$response"
+                                break
+                            fi
+                            
                             if [ \$attempts -eq \$max_attempts ]; then
-                                echo "Le service ne répond pas après \$max_attempts tentatives"
+                                echo "Échec du health check après \$max_attempts tentatives"
+                                echo "Dernière réponse: \$response"
+                                docker logs ${env.CONTAINER_NAME}
                                 exit 1
                             fi
+                            
+                            echo "Tentative \$((attempts+1))/\$max_attempts - Service pas encore prêt"
                             attempts=\$((attempts+1))
-                            sleep 1
+                            sleep 3
                         done
                     """
-                    echo "Le service est opérationnel sur le port ${env.SERVICE_PORT}"
+                    
+                    // Test supplémentaire des endpoints
+                    sh """
+                        echo "Test des endpoints disponibles:"
+                        curl -v http://localhost:${env.SERVICE_PORT}/api/health
+                        curl -v http://localhost:${env.SERVICE_PORT}/api/paiements -X POST -H "Content-Type: application/json" -d '{"montant": 100}'
+                    """
                 }
             }
         }
@@ -153,6 +173,11 @@ pipeline {
     post {
         always {
             script {
+                // Archivage des logs en cas d'échec
+                sh "docker logs ${env.CONTAINER_NAME} > container_logs.txt || true"
+                archiveArtifacts artifacts: 'container_logs.txt', onlyIfFailed: true
+                
+                // Nettoyage
                 if (env.NODE_NAME != null) {
                     cleanWs()
                 }
@@ -162,17 +187,16 @@ pipeline {
         success {
             script {
                 echo """
-                ✅ Build réussi!
-                Image Docker: ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+                ✅ Déploiement réussi!
+                URL: http://localhost:${env.SERVICE_PORT}
+                Image: ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
                 Conteneur: ${env.CONTAINER_NAME}
-                Port: ${env.SERVICE_PORT}
                 """
             }
         }
         failure {
             script {
                 echo '❌ Échec du pipeline'
-                // Nettoyage des conteneurs en cas d'échec
                 sh "docker stop ${env.CONTAINER_NAME} || true"
                 sh "docker rm ${env.CONTAINER_NAME} || true"
             }
