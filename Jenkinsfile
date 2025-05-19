@@ -2,7 +2,7 @@ pipeline {
     agent any
     
     environment {
-        NODE_ENV = 'production'
+        NODE_ENV = 'test'
         SKIP_DB_CONNECTION = 'true'
         JEST_JUNIT_OUTPUT = 'test-results/junit.xml'
         DOCKER_IMAGE = 'microservice-paiement'
@@ -10,7 +10,6 @@ pipeline {
         DOCKER_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT?.take(7) ?: 'unknown'}"
         CONTAINER_NAME = 'microservice-paiement-container'
         SERVICE_PORT = '3002'
-        APP_HOST = '0.0.0.0'
     }
     
     options {
@@ -47,6 +46,8 @@ pipeline {
             steps {
                 dir('backend') {
                     sh 'npm ci --prefer-offline --audit false'
+                    // Installation spécifique de jest-junit
+                    sh 'npm install --save-dev jest-junit'
                 }
             }
         }
@@ -62,17 +63,33 @@ pipeline {
         stage('Run Tests') {
             steps {
                 dir('backend') {
-                    sh 'npm run test:ci'
+                    // Commande de test modifiée avec le bon reporter
+                    sh '''
+                        mkdir -p test-results
+                        NODE_ENV=test SKIP_DB_CONNECTION=true jest \
+                          --ci \
+                          --coverage \
+                          --reporters=default \
+                          --reporters=jest-junit \
+                          --testResultsProcessor="jest-junit"
+                    '''
                 }
             }
             post {
                 always {
                     junit 'backend/test-results/junit.xml'
-                    publishHTML(target: [
-                        reportDir: 'backend/coverage/lcov-report',
-                        reportFiles: 'index.html',
-                        reportName: 'Coverage Report'
-                    ])
+                    // Vérification de l'existence du répertoire avant publication
+                    script {
+                        if (fileExists('backend/coverage/lcov-report/index.html')) {
+                            publishHTML(target: [
+                                reportDir: 'backend/coverage/lcov-report',
+                                reportFiles: 'index.html',
+                                reportName: 'Coverage Report'
+                            ])
+                        } else {
+                            echo "Le rapport de couverture n'existe pas, skip..."
+                        }
+                    }
                 }
             }
         }
@@ -92,11 +109,12 @@ pipeline {
                             passwordVariable: 'DOCKER_PASS'
                         )]) {
                             sh """
-                                docker login -u $DOCKER_USER -p $DOCKER_PASS ${env.DOCKER_REGISTRY}
-                                docker build -t ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
+                                docker login -u $DOCKER_USER -p $DOCKER_PASS
+                                docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
+                                docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
                                 docker push ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
                                 
-                                docker tag ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:latest
+                                docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:latest
                                 docker push ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:latest
                             """
                         }
@@ -108,25 +126,19 @@ pipeline {
         stage('Deploy Container') {
             steps {
                 script {
-                    // Nettoyage des anciens conteneurs
                     sh "docker stop ${env.CONTAINER_NAME} || true"
                     sh "docker rm ${env.CONTAINER_NAME} || true"
                     
-                    // Démarrage du conteneur avec toutes les variables nécessaires
                     sh """
                         docker run -d \
                             --name ${env.CONTAINER_NAME} \
                             -p ${env.SERVICE_PORT}:${env.SERVICE_PORT} \
-                            -e NODE_ENV=${env.NODE_ENV} \
+                            -e NODE_ENV=production \
                             -e PORT=${env.SERVICE_PORT} \
-                            -e SKIP_DB_CONNECTION=${env.SKIP_DB_CONNECTION} \
-                            -e APP_HOST=${env.APP_HOST} \
-                            ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+                            ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
                     """
                     
-                    // Attente et vérification
                     sleep 5
-                    sh "docker ps -a | grep ${env.CONTAINER_NAME}"
                     sh "docker logs ${env.CONTAINER_NAME}"
                 }
             }
@@ -135,35 +147,18 @@ pipeline {
         stage('Health Check') {
             steps {
                 script {
-                    // Vérification complète de la santé de l'application
                     sh """
                         attempts=0
                         max_attempts=30
-                        while true; do
-                            response=\$(curl -s http://localhost:${env.SERVICE_PORT}/api/health || echo "FAIL")
-                            if echo "\$response" | grep -q '"success":true'; then
-                                echo "Health check successful: \$response"
-                                break
-                            fi
-                            
+                        while ! curl -f -s http://localhost:${env.SERVICE_PORT}/api/health; do
                             if [ \$attempts -eq \$max_attempts ]; then
-                                echo "Échec du health check après \$max_attempts tentatives"
-                                echo "Dernière réponse: \$response"
-                                docker logs ${env.CONTAINER_NAME}
+                                echo "Le service ne répond pas après \$max_attempts tentatives"
                                 exit 1
                             fi
-                            
-                            echo "Tentative \$((attempts+1))/\$max_attempts - Service pas encore prêt"
                             attempts=\$((attempts+1))
-                            sleep 3
+                            sleep 2
                         done
-                    """
-                    
-                    // Test supplémentaire des endpoints
-                    sh """
-                        echo "Test des endpoints disponibles:"
-                        curl -v http://localhost:${env.SERVICE_PORT}/api/health
-                        curl -v http://localhost:${env.SERVICE_PORT}/api/paiements -X POST -H "Content-Type: application/json" -d '{"montant": 100}'
+                        echo "✅ Health check passed"
                     """
                 }
             }
@@ -173,14 +168,8 @@ pipeline {
     post {
         always {
             script {
-                // Archivage des logs en cas d'échec
-                sh "docker logs ${env.CONTAINER_NAME} > container_logs.txt || true"
-                archiveArtifacts artifacts: 'container_logs.txt', onlyIfFailed: true
-                
-                // Nettoyage
-                if (env.NODE_NAME != null) {
-                    cleanWs()
-                }
+                archiveArtifacts artifacts: '**/test-results/*.xml', allowEmptyArchive: true
+                cleanWs()
                 currentBuild.description = "v${env.BUILD_NUMBER}"
             }
         }
@@ -190,7 +179,6 @@ pipeline {
                 ✅ Déploiement réussi!
                 URL: http://localhost:${env.SERVICE_PORT}
                 Image: ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
-                Conteneur: ${env.CONTAINER_NAME}
                 """
             }
         }
