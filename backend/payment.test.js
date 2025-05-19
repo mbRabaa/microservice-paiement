@@ -11,7 +11,7 @@ jest.mock('pg', () => {
   const mPool = {
     connect: jest.fn().mockResolvedValue(mClient),
     query: jest.fn(),
-    on: jest.fn(), // Ajouté pour gérer les événements
+    on: jest.fn(),
     end: jest.fn(),
   };
 
@@ -22,30 +22,18 @@ describe('Microservice Paiement', () => {
   let client;
 
   beforeAll(() => {
-    // Initialisation des mocks
     client = {
       query: jest.fn(),
       release: jest.fn(),
     };
-    
     pool.connect.mockResolvedValue(client);
-    pool.on.mockImplementation((event, callback) => {
-      if (event === 'error') {
-        // Simulation basique pour les erreurs de connexion
-        callback(new Error('Erreur de connexion simulée'));
-      }
-    });
   });
 
   beforeEach(() => {
-    // Réinitialisation et configuration de base pour chaque test
     jest.clearAllMocks();
-    
-    // Configuration par défaut
-    client.query.mockResolvedValue({ rows: [] });
     pool.query.mockImplementation((query) => {
-      if (query === 'SELECT 1') return Promise.resolve({ rows: [{}] }); // Pour le middleware
-      if (query === 'SELECT NOW()') return Promise.resolve({ rows: [{ now: new Date() }] }); // Pour testConnection
+      if (query === 'SELECT 1') return Promise.resolve({ rows: [{}] });
+      if (query === 'SELECT NOW()') return Promise.resolve({ rows: [{ now: new Date() }] });
       return Promise.resolve({ rows: [] });
     });
   });
@@ -56,10 +44,19 @@ describe('Microservice Paiement', () => {
         .get('/api/health')
         .expect(200);
       
+      // Mise à jour pour correspondre à la nouvelle réponse
       expect(response.body).toEqual({
         status: 'OK',
         timestamp: expect.any(String),
-        database: 'Connected'
+        database: 'Connected',
+        uptime: expect.any(Number),
+        memoryUsage: expect.objectContaining({
+          rss: expect.any(Number),
+          heapTotal: expect.any(Number),
+          heapUsed: expect.any(Number),
+          external: expect.any(Number),
+          arrayBuffers: expect.any(Number)
+        })
       });
     });
   });
@@ -74,7 +71,6 @@ describe('Microservice Paiement', () => {
     };
 
     it('devrait créer un paiement valide (201)', async () => {
-      // Mock spécifique pour l'INSERT
       const mockPayment = {
         id: 1,
         montant: 100,
@@ -82,14 +78,15 @@ describe('Microservice Paiement', () => {
         created_at: new Date().toISOString()
       };
 
-      pool.query.mockImplementationOnce(() => Promise.resolve({ rows: [{}] })) // SELECT 1
-             .mockImplementationOnce(() => Promise.resolve({ rows: [mockPayment] })); // INSERT
+      pool.query.mockImplementationOnce(() => Promise.resolve({ rows: [{}] }))
+             .mockImplementationOnce(() => Promise.resolve({ rows: [mockPayment] }));
 
       const response = await request(app)
         .post('/api/paiements')
         .send(validPayment)
         .expect(201);
       
+      // Mise à jour pour inclure les liens HATEOAS
       expect(response.body).toEqual({
         success: true,
         payment: expect.objectContaining({
@@ -97,7 +94,11 @@ describe('Microservice Paiement', () => {
           montant: 100,
           statut: 'completed'
         }),
-        receipt_url: expect.stringContaining('/api/paiements/1/receipt')
+        receipt_url: expect.stringContaining('/api/paiements/1/receipt'),
+        links: expect.objectContaining({
+          self: expect.stringContaining('/api/paiements/1'),
+          receipt: expect.stringContaining('/api/paiements/1/receipt')
+        })
       });
     });
 
@@ -111,8 +112,8 @@ describe('Microservice Paiement', () => {
     });
 
     it('devrait gérer les erreurs SQL (500)', async () => {
-      pool.query.mockImplementationOnce(() => Promise.resolve({ rows: [{}] })) // SELECT 1
-             .mockImplementationOnce(() => Promise.reject(new Error('Erreur SQL'))); // INSERT
+      pool.query.mockImplementationOnce(() => Promise.resolve({ rows: [{}] }))
+             .mockImplementationOnce(() => Promise.reject(new Error('Erreur SQL')));
 
       const response = await request(app)
         .post('/api/paiements')

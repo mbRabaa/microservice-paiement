@@ -69,16 +69,70 @@ app.use(async (req, res, next) => {
   }
 });
 
+// ==================== ROUTES ====================
+
+// Route racine - Documentation de l'API
+app.get('/', (req, res) => {
+  res.status(200).json({
+    success: true,
+    service: "Microservice de Paiement",
+    version: "1.0.0",
+    environment: process.env.NODE_ENV || 'development',
+    documentation: {
+      swagger: "/api-docs",
+      postman: "/api-postman.json"
+    },
+    endpoints: [
+      {
+        path: "/api/health",
+        method: "GET",
+        description: "Vérifie l'état du service",
+        exampleResponse: {
+          status: "OK",
+          timestamp: "ISO8601",
+          database: "Connected"
+        }
+      },
+      {
+        path: "/api/paiements",
+        method: "POST",
+        description: "Enregistre un nouveau paiement",
+        requiredFields: {
+          montant: "number",
+          mode_paiement: "['credit','debit']",
+          client_email: "string",
+          client_name: "string",
+          trajet: "string"
+        },
+        exampleRequest: {
+          montant: 100,
+          mode_paiement: "credit",
+          client_email: "client@example.com",
+          client_name: "Jean Dupont",
+          trajet: "PAR-NCE-12345"
+        }
+      }
+    ],
+    database: {
+      status: "Connected",
+      type: "PostgreSQL",
+      host: pool.options.host || "neon.tech"
+    }
+  });
+});
+
 // Route de santé
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
-    database: 'Connected'
+    database: 'Connected',
+    uptime: process.uptime(),
+    memoryUsage: process.memoryUsage()
   });
 });
 
-// Nouvelle Route de paiement optimisée
+// Route de paiement
 app.post('/api/paiements', async (req, res) => {
   const requiredFields = {
     montant: 'number',
@@ -92,8 +146,10 @@ app.post('/api/paiements', async (req, res) => {
   for (const [field, type] of Object.entries(requiredFields)) {
     if (!req.body[field]) {
       return res.status(400).json({
+        success: false,
         error: `Champ manquant: ${field}`,
-        details: `Type attendu: ${type}`
+        details: `Type attendu: ${type}`,
+        requiredFields
       });
     }
   }
@@ -101,6 +157,7 @@ app.post('/api/paiements', async (req, res) => {
   // Validation supplémentaire
   if (isNaN(req.body.montant)) {
     return res.status(400).json({
+      success: false,
       error: 'Le montant doit être un nombre',
       details: `Reçu: ${typeof req.body.montant}`
     });
@@ -108,8 +165,10 @@ app.post('/api/paiements', async (req, res) => {
 
   if (!['credit', 'debit'].includes(req.body.mode_paiement)) {
     return res.status(400).json({
+      success: false,
       error: 'Mode de paiement invalide',
-      details: 'Doit être "credit" ou "debit"'
+      details: 'Doit être "credit" ou "debit"',
+      validModes: ['credit', 'debit']
     });
   }
 
@@ -135,7 +194,11 @@ app.post('/api/paiements', async (req, res) => {
     res.status(201).json({
       success: true,
       payment: rows[0],
-      receipt_url: `/api/paiements/${rows[0].id}/receipt`
+      receipt_url: `/api/paiements/${rows[0].id}/receipt`,
+      links: {
+        self: `/api/paiements/${rows[0].id}`,
+        receipt: `/api/paiements/${rows[0].id}/receipt`
+      }
     });
 
   } catch (error) {
@@ -161,6 +224,7 @@ app.use((req, res) => {
   res.status(404).json({
     success: false,
     error: 'Endpoint non trouvé',
+    documentation: "/",
     availableEndpoints: [
       '/api/health (GET)',
       '/api/paiements (POST)'
@@ -174,7 +238,9 @@ app.use((err, req, res, next) => {
   res.status(500).json({
     success: false,
     error: 'Erreur interne du serveur',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    requestId: req.id,
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
   });
 });
 
