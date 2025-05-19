@@ -6,7 +6,7 @@ pipeline {
         SKIP_DB_CONNECTION = 'true'
         JEST_JUNIT_OUTPUT = 'test-results/junit.xml'
         DOCKER_IMAGE = 'microservice-paiement'
-        DOCKER_REGISTRY = 'docker.io/votre-dockerhub-username' // Remplacez par votre vrai username
+        DOCKER_REGISTRY = 'docker.io/mbrabaa2023' 
         // Modification de la construction du tag Docker
         DOCKER_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT?.take(7) ?: 'unknown'}"
     }
