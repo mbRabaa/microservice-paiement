@@ -1,53 +1,83 @@
 pipeline {
     agent any
-    
+
     environment {
         NODE_ENV = 'test'
         SKIP_DB_CONNECTION = 'true'
-        JEST_JUNIT_OUTPUT_DIR = 'test-results'
-        JEST_JUNIT_OUTPUT_NAME = 'test-results.xml'
     }
-    
+
     stages {
         stage('Checkout') {
             steps {
                 checkout scm
             }
         }
-        
-        stage('Install Dependencies') {
+
+        stage('Setup Node.js') {
             steps {
-                sh 'npm ci --prefer-offline --audit false'
-                sh 'npm list' // Vérification visuelle des dépendances
+                script {
+                    def nodeVersion = sh(returnStdout: true, script: 'node --version').trim()
+                    def npmVersion = sh(returnStdout: true, script: 'npm --version').trim()
+                    echo "Using Node ${nodeVersion} and npm ${npmVersion}"
+                }
             }
         }
-        
-        stage('Build Verification') {
+
+        stage('Install Dependencies') {
             steps {
-                sh 'npm run build' // Exécute votre script echo + tsc
-                script {
-                    if (fileExists('dist')) {
-                        echo "Build artifacts detected in dist/"
-                    } else {
-                        echo "No build artifacts generated (expected for this project)"
+                dir('backend') {
+                    sh 'npm ci --prefer-offline --audit false'
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                dir('backend') {
+                    sh 'npm run build'
+                    script {
+                        // Vérification des artefacts de build
+                        if (fileExists('dist')) {
+                            echo "Build artefacts found in dist/"
+                            archiveArtifacts artifacts: 'dist/**/*'
+                        } else {
+                            echo "No build artefacts directory found (simple project)"
+                        }
                     }
                 }
             }
         }
-        
-        stage('Unit Tests') {
+
+        stage('Run Tests') {
             steps {
-                sh 'npm test' // Exécute Jest avec votre configuration
+                dir('backend') {
+                    sh 'npm run test:ci'  // Utilise la commande CI spécifique
+                }
             }
             post {
                 always {
-                    junit 'test-results/test-results.xml' // Rapport JUnit
-                    archiveArtifacts artifacts: 'test-results/**/*' // Archivage des résultats
+                    junit 'backend/test-results/junit.xml'
+                    publishHTML(target: [
+                        reportDir: 'backend/coverage/lcov-report',
+                        reportFiles: 'index.html',
+                        reportName: 'Coverage Report'
+                    ])
+                    archiveArtifacts artifacts: 'backend/coverage/**/*'
+                }
+            }
+        }
+
+        stage('Security Check') {
+            steps {
+                dir('backend') {
+                    catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                        sh 'npm audit --audit-level=moderate'
+                    }
                 }
             }
         }
     }
-    
+
     post {
         always {
             cleanWs()
@@ -56,17 +86,22 @@ pipeline {
             }
         }
         success {
-            echo '✅ Pipeline exécuté avec succès'
-            // Ici vous pourriez ajouter des notifications (Slack/Email)
+            slackSend(
+                channel: '#devops',
+                message: "✅ Microservice Paiement - Build #${env.BUILD_NUMBER} Success\n${env.BUILD_URL}"
+            )
         }
         failure {
-            echo '❌ Pipeline en échec - Consultez les logs'
+            slackSend(
+                channel: '#devops',
+                message: "❌ Microservice Paiement - Build #${env.BUILD_NUMBER} Failed\n${env.BUILD_URL}"
+            )
         }
     }
-    
+
     options {
         timeout(time: 15, unit: 'MINUTES')
-        buildDiscarder(logRotator(numToKeepStr: '10'))
-        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '5'))
+        skipDefaultCheckout(false)
     }
 }

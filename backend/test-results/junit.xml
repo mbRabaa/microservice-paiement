@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="jest tests" tests="5" failures="0" errors="0" time="3.217">
+  <testsuite name="Microservice Paiement" errors="0" failures="0" skipped="0" timestamp="2025-05-19T21:33:33" time="3.133" tests="5">
+    <testcase classname="Microservice Paiement GET /api/health devrait retourner 200 et le statut OK" name="Microservice Paiement GET /api/health devrait retourner 200 et le statut OK" time="0.749">
+    </testcase>
+    <testcase classname="Microservice Paiement POST /api/paiements devrait créer un paiement valide (201)" name="Microservice Paiement POST /api/paiements devrait créer un paiement valide (201)" time="0.556">
+    </testcase>
+    <testcase classname="Microservice Paiement POST /api/paiements devrait refuser un montant invalide (400)" name="Microservice Paiement POST /api/paiements devrait refuser un montant invalide (400)" time="0.157">
+    </testcase>
+    <testcase classname="Microservice Paiement POST /api/paiements devrait gérer les erreurs SQL (500)" name="Microservice Paiement POST /api/paiements devrait gérer les erreurs SQL (500)" time="0.33">
+    </testcase>
+    <testcase classname="Microservice Paiement Gestion des erreurs devrait retourner 404 pour route inexistante" name="Microservice Paiement Gestion des erreurs devrait retourner 404 pour route inexistante" time="0.055">
+    </testcase>
+  </testsuite>
+</testsuites>
