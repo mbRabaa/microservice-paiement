@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: microservice-paiement
+  namespace: frontend
+  labels:
+    app: microservice-paiement
+    tier: backend
+spec:
+  type: NodePort
+  ports:
+  - port: 3002
+    targetPort: 3002
+    nodePort: 30089
+  selector:
+    app: microservice-paiement

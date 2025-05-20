@@ -1,23 +1,28 @@
 # Dependencies
 node_modules/
 .npm
-package-lock.json  # Correction: pas de point au début
+package-lock.json  
 
 # Tests et couverture
 coverage/
 .nyc_output/
 
 # Configuration
-config.js          # Ajouté ici
-config/*.js        # Pour ignorer tous les fichiers JS dans un dossier config/
-*.config.js        # Pour tous les fichiers se terminant par .config.js
+config.js
+config/*.js
+*.config.js
 
 # Environnement
 .env
 .env*.local
 
+# Secrets Kubernetes
+k8s/secret.yaml
+*.secret
+
 # Système
 .DS_Store
 
+# Docker / fichiers spécifiques
 Dockerfile
 *.mdv

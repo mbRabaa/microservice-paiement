@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: microservice-paiement
+  namespace: frontend
+  labels:
+    app: microservice-paiement
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: microservice-paiement
+  template:
+    metadata:
+      labels:
+        app: microservice-paiement
+    spec:
+      containers:
+      - name: microservice-paiement
+        image: docker.io/mbrabaa2023/microservice-paiement:latest # sera remplacé par Jenkins
+        ports:
+        - containerPort: 3002
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3002"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: neon-db-secret
+              key: DATABASE_URL
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 3002
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 3002
+          initialDelaySeconds: 5
+          periodSeconds: 5
