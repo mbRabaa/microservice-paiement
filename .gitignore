@@ -16,9 +16,7 @@ config/*.js
 .env
 .env*.local
 
-# Secrets Kubernetes
-k8s/secret.yaml
-*.secret
+
 
 # Système
 .DS_Store
