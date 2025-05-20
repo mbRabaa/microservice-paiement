@@ -11,7 +11,7 @@ pipeline {
         CONTAINER_NAME = 'microservice-paiement-container'
         SERVICE_PORT = '3002'
         KUBE_NAMESPACE = 'frontend'
-        KUBE_CONFIG_FILE = '/home/jenkins/.kube/config'
+        KUBECONFIG = credentials('k3s-jenkins-config')
     }
     
     options {
@@ -98,12 +98,23 @@ pipeline {
                                 docker build -t ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
                                 docker push ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
                                 
-                                # Tag latest
                                 docker tag ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:latest
                                 docker push ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:latest
                             """
                         }
                     }
+                }
+            }
+        }
+        
+        stage('Verify Kubernetes Access') {
+            steps {
+                script {
+                    sh """
+                        echo "=== Vérification de l'accès au cluster ==="
+                        kubectl cluster-info
+                        kubectl get nodes
+                    """
                 }
             }
         }
@@ -118,62 +129,66 @@ pipeline {
             }
             steps {
                 script {
-                    // Debug: Afficher la structure des fichiers
-                    sh 'pwd && ls -la k8s/'
-                    
-                    // Vérification de l'accès au cluster
+                    // 1. Préparation
                     sh """
-                        kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} cluster-info
-                        kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} get nodes
+                        echo "=== Structure des fichiers K8s ==="
+                        pwd && ls -la k8s/
                     """
                     
-                    // Création du namespace s'il n'existe pas
+                    // 2. Configuration du namespace
                     sh """
-                        kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} create namespace ${env.KUBE_NAMESPACE} || true
+                        kubectl create namespace ${env.KUBE_NAMESPACE} || true
                     """
                     
-                    // Application du secret
+                    // 3. Déploiement des ressources
                     sh """
-                        kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} apply -f k8s/secret.yaml -n ${env.KUBE_NAMESPACE}
-                    """
-                    
-                    // Mise à jour de l'image dans le deployment
-                    sh """
+                        kubectl apply -f k8s/secret.yaml -n ${env.KUBE_NAMESPACE}
                         sed -i "s|image: .*|image: ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}|g" k8s/deployment.yaml
+                        kubectl apply -f k8s/deployment.yaml -n ${env.KUBE_NAMESPACE}
+                        kubectl apply -f k8s/service.yaml -n ${env.KUBE_NAMESPACE}
                     """
                     
-                    // Déploiement des ressources Kubernetes
+                    // 4. Vérification détaillée
                     sh """
-                        kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} apply -f k8s/deployment.yaml -n ${env.KUBE_NAMESPACE}
-                        kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} apply -f k8s/service.yaml -n ${env.KUBE_NAMESPACE}
+                        echo "\\n=== État complet du déploiement ==="
+                        kubectl get all -n ${env.KUBE_NAMESPACE}
+                        
+                        echo "\\n=== Détails des Pods ==="
+                        kubectl get pods -n ${env.KUBE_NAMESPACE} -o wide
+                        kubectl describe pods -n ${env.KUBE_NAMESPACE} -l app=microservice-paiement
+                        
+                        echo "\\n=== Détails des Services ==="
+                        kubectl get svc -n ${env.KUBE_NAMESPACE}
+                        kubectl describe svc microservice-paiement -n ${env.KUBE_NAMESPACE}
+                        
+                        echo "\\n=== Logs initiaux ==="
+                        kubectl logs -n ${env.KUBE_NAMESPACE} -l app=microservice-paiement --tail=50
                     """
                     
-                    // Vérification du déploiement
+                    // 5. Vérification de santé
                     sh """
-                        echo "=== État du déploiement ==="
-                        kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} get all -n ${env.KUBE_NAMESPACE}
-                        echo "=== Logs ==="
-                        kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} logs -n ${env.KUBE_NAMESPACE} -l app=microservice-paiement --tail=50
-                    """
-                    
-                    // Affichage des informations d'accès
-                    sh """
-                        echo "=== Informations d'accès ==="
-                        echo "NodePort: 30082"
-                        echo "Pour accéder au service:"
-                        echo "kubectl port-forward svc/microservice-paiement 3002:3002 -n ${env.KUBE_NAMESPACE} &"
-                        echo "curl http://localhost:3002/api/health"
+                        echo "\\n=== Vérification de la santé ==="
+                        kubectl rollout status deployment/microservice-paiement -n ${env.KUBE_NAMESPACE} --timeout=120s
                     """
                 }
             }
             post {
                 failure {
                     script {
-                        echo "❌ Échec du déploiement Kubernetes - Tentative de rollback"
+                        echo "❌ Échec du déploiement - Début du rollback"
                         sh """
-                            kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} rollout undo deployment/microservice-paiement -n ${env.KUBE_NAMESPACE}
-                            kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} delete -f k8s/deployment.yaml -n ${env.KUBE_NAMESPACE} || true
-                            kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} delete -f k8s/service.yaml -n ${env.KUBE_NAMESPACE} || true
+                            echo "=== État avant rollback ==="
+                            kubectl get all -n ${env.KUBE_NAMESPACE}
+                            
+                            echo "=== Tentative de rollback ==="
+                            kubectl rollout undo deployment/microservice-paiement -n ${env.KUBE_NAMESPACE}
+                            
+                            echo "=== Nettoyage ==="
+                            kubectl delete -f k8s/deployment.yaml -n ${env.KUBE_NAMESPACE} || true
+                            kubectl delete -f k8s/service.yaml -n ${env.KUBE_NAMESPACE} || true
+                            
+                            echo "=== État après rollback ==="
+                            kubectl get all -n ${env.KUBE_NAMESPACE}
                         """
                     }
                 }
@@ -191,22 +206,21 @@ pipeline {
         success {
             script {
                 echo """
-                ✅ Build réussi!
-                Image Docker: ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
-                Namespace Kubernetes: ${env.KUBE_NAMESPACE}
-                Service NodePort: 30082
+                ✅ Déploiement réussi!
+                Image: ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+                Namespace: ${env.KUBE_NAMESPACE}
+                Accès: kubectl port-forward svc/microservice-paiement 3002:3002 -n ${env.KUBE_NAMESPACE}
                 """
             }
         }
         failure {
             script {
                 echo '❌ Échec du pipeline'
-                // Nettoyage des ressources
-                sh "docker stop ${env.CONTAINER_NAME} || true"
-                sh "docker rm ${env.CONTAINER_NAME} || true"
                 sh """
-                    kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} delete -f k8s/deployment.yaml -n ${env.KUBE_NAMESPACE} || true
-                    kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} delete -f k8s/service.yaml -n ${env.KUBE_NAMESPACE} || true
+                    docker stop ${env.CONTAINER_NAME} || true
+                    docker rm ${env.CONTAINER_NAME} || true
+                    kubectl delete -f k8s/deployment.yaml -n ${env.KUBE_NAMESPACE} || true
+                    kubectl delete -f k8s/service.yaml -n ${env.KUBE_NAMESPACE} || true
                 """
             }
         }
