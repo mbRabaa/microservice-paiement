@@ -118,8 +118,8 @@ pipeline {
             }
             steps {
                 script {
-                    // Debug: Afficher les fichiers disponibles
-                    sh 'ls -la k8s/ || true'
+                    // Debug: Afficher la structure des fichiers
+                    sh 'pwd && ls -la k8s/'
                     
                     // Vérification de l'accès au cluster
                     sh """
@@ -151,17 +151,9 @@ pipeline {
                     // Vérification du déploiement
                     sh """
                         echo "=== État du déploiement ==="
-                        kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} get deployment/microservice-paiement -n ${env.KUBE_NAMESPACE} -o wide
-                        kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} get pods -n ${env.KUBE_NAMESPACE} -l app=microservice-paiement
-                        kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} get svc/microservice-paiement -n ${env.KUBE_NAMESPACE}
-                        
-                        echo "=== Logs des pods ==="
-                        kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} logs -n ${env.KUBE_NAMESPACE} -l app=microservice-paiement --tail=50 || true
-                    """
-                    
-                    // Attente que les pods soient prêts
-                    sh """
-                        kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} rollout status deployment/microservice-paiement -n ${env.KUBE_NAMESPACE} --timeout=300s
+                        kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} get all -n ${env.KUBE_NAMESPACE}
+                        echo "=== Logs ==="
+                        kubectl --kubeconfig=${env.KUBE_CONFIG_FILE} logs -n ${env.KUBE_NAMESPACE} -l app=microservice-paiement --tail=50
                     """
                     
                     // Affichage des informations d'accès
