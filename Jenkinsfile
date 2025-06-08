@@ -11,7 +11,8 @@ pipeline {
         CONTAINER_NAME = 'microservice-paiement-container'
         SERVICE_PORT = '3002'
         KUBE_NAMESPACE = 'frontend'
-        KUBECONFIG = credentials('k3s-jenkins-config')
+        // Modification importante: utilisation d'un fichier temporaire pour KUBECONFIG
+        KUBECONFIG = "${WORKSPACE}/kubeconfig"
     }
     
     options {
@@ -20,6 +21,20 @@ pipeline {
     }
     
     stages {
+        stage('Preparation') {
+            steps {
+                script {
+                    // Création du fichier kubeconfig à partir des credentials
+                    withCredentials([file(credentialsId: 'k3s-jenkins-config', variable: 'KUBECONFIG_FILE')]) {
+                        sh """
+                            cp ${KUBECONFIG_FILE} ${env.KUBECONFIG}
+                            chmod 600 ${env.KUBECONFIG}
+                        """
+                    }
+                }
+            }
+        }
+
         stage('Checkout') {
             steps {
                 checkout scm
@@ -116,14 +131,14 @@ pipeline {
                             ls -la ${env.KUBECONFIG}
                             
                             echo "=== Test de connexion avec KUBECONFIG ==="
-                            KUBECONFIG=${env.KUBECONFIG} kubectl cluster-info
+                            kubectl --kubeconfig=${env.KUBECONFIG} cluster-info
                             
                             echo "=== Vérification des accès ==="
-                            KUBECONFIG=${env.KUBECONFIG} kubectl get nodes
+                            kubectl --kubeconfig=${env.KUBECONFIG} get nodes
                             
                             echo "=== Vérification du namespace ==="
-                            KUBECONFIG=${env.KUBECONFIG} kubectl get namespace ${env.KUBE_NAMESPACE} || \
-                            KUBECONFIG=${env.KUBECONFIG} kubectl create namespace ${env.KUBE_NAMESPACE}
+                            kubectl --kubeconfig=${env.KUBECONFIG} get namespace ${env.KUBE_NAMESPACE} || \
+                            kubectl --kubeconfig=${env.KUBECONFIG} create namespace ${env.KUBE_NAMESPACE}
                         """
                     } catch (Exception e) {
                         error("Erreur d'accès au cluster Kubernetes: ${e.message}\n" +
@@ -147,78 +162,25 @@ pipeline {
             steps {
                 script {
                     try {
-                        // 1. Préparation
                         sh """
                             echo "=== Structure des fichiers K8s ==="
                             ls -la k8s/
                             
-                            echo "=== Vérification des fichiers YAML ==="
-                            test -f k8s/deployment.yaml || exit 1
-                            test -f k8s/service.yaml || exit 1
-                            test -f k8s/secret.yaml || exit 1
-                        """
-                        
-                        // 2. Configuration du namespace
-                        sh """
-                            KUBECONFIG=${env.KUBECONFIG} kubectl create namespace ${env.KUBE_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
-                        """
-                        
-                        // 3. Déploiement des ressources
-                        sh """
                             echo "=== Application des secrets ==="
-                            KUBECONFIG=${env.KUBECONFIG} kubectl apply -f k8s/secret.yaml -n ${env.KUBE_NAMESPACE}
+                            kubectl --kubeconfig=${env.KUBECONFIG} apply -f k8s/secret.yaml -n ${env.KUBE_NAMESPACE}
                             
                             echo "=== Mise à jour de l'image dans deployment.yaml ==="
                             sed -i "s|image: .*|image: ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}|g" k8s/deployment.yaml
                             
                             echo "=== Déploiement de l'application ==="
-                            KUBECONFIG=${env.KUBECONFIG} kubectl apply -f k8s/deployment.yaml -n ${env.KUBE_NAMESPACE}
-                            KUBECONFIG=${env.KUBECONFIG} kubectl apply -f k8s/service.yaml -n ${env.KUBE_NAMESPACE}
-                        """
-                        
-                        // 4. Vérification détaillée
-                        sh """
-                            echo "\\n=== État complet du déploiement ==="
-                            KUBECONFIG=${env.KUBECONFIG} kubectl get all -n ${env.KUBE_NAMESPACE}
+                            kubectl --kubeconfig=${env.KUBECONFIG} apply -f k8s/deployment.yaml -n ${env.KUBE_NAMESPACE}
+                            kubectl --kubeconfig=${env.KUBECONFIG} apply -f k8s/service.yaml -n ${env.KUBE_NAMESPACE}
                             
-                            echo "\\n=== Détails des Pods ==="
-                            KUBECONFIG=${env.KUBECONFIG} kubectl get pods -n ${env.KUBE_NAMESPACE} -o wide
-                            KUBECONFIG=${env.KUBECONFIG} kubectl describe pods -n ${env.KUBE_NAMESPACE} -l app=microservice-paiement
-                            
-                            echo "\\n=== Détails des Services ==="
-                            KUBECONFIG=${env.KUBECONFIG} kubectl get svc -n ${env.KUBE_NAMESPACE}
-                            KUBECONFIG=${env.KUBECONFIG} kubectl describe svc microservice-paiement -n ${env.KUBE_NAMESPACE}
-                            
-                            echo "\\n=== Attente du déploiement ==="
-                            KUBECONFIG=${env.KUBECONFIG} kubectl rollout status deployment/microservice-paiement -n ${env.KUBE_NAMESPACE} --timeout=120s
-                            
-                            echo "\\n=== Logs initiaux ==="
-                            KUBECONFIG=${env.KUBECONFIG} kubectl logs -n ${env.KUBE_NAMESPACE} -l app=microservice-paiement --tail=50
+                            echo "=== Attente du déploiement ==="
+                            kubectl --kubeconfig=${env.KUBECONFIG} rollout status deployment/microservice-paiement -n ${env.KUBE_NAMESPACE} --timeout=120s
                         """
                     } catch (Exception e) {
                         error("Erreur lors du déploiement Kubernetes: ${e.message}")
-                    }
-                }
-            }
-            post {
-                failure {
-                    script {
-                        echo "❌ Échec du déploiement - Début du rollback"
-                        try {
-                            sh """
-                                echo "=== Tentative de rollback ==="
-                                KUBECONFIG=${env.KUBECONFIG} kubectl rollout undo deployment/microservice-paiement -n ${env.KUBE_NAMESPACE} || true
-                                
-                                echo "=== Nettoyage ==="
-                                KUBECONFIG=${env.KUBECONFIG} kubectl delete -f k8s/deployment.yaml -n ${env.KUBE_NAMESPACE} --ignore-not-found=true
-                                KUBECONFIG=${env.KUBECONFIG} kubectl delete -f k8s/service.yaml -n ${env.KUBE_NAMESPACE} --ignore-not-found=true
-                                
-                                echo "=== État après rollback ==="
-                                KUBECONFIG=${env.KUBECONFIG} kubectl get all -n ${env.KUBE_NAMESPACE}
-                            """
-                        } catch (Exception e) {
-                            echo "⚠️ Erreur lors du rollback: ${e.message}"
-                        }
                     }
                 }
             }
@@ -228,6 +190,8 @@ pipeline {
     post {
         always {
             script {
+                // Nettoyage du fichier kubeconfig
+                sh "rm -f ${env.KUBECONFIG} || true"
                 cleanWs()
                 currentBuild.description = "v${env.BUILD_NUMBER}"
             }
@@ -245,16 +209,12 @@ pipeline {
         failure {
             script {
                 echo '❌ Échec du pipeline'
-                try {
-                    sh """
-                        docker stop ${env.CONTAINER_NAME} || true
-                        docker rm ${env.CONTAINER_NAME} || true
-                        KUBECONFIG=${env.KUBECONFIG} kubectl delete -f k8s/deployment.yaml -n ${env.KUBE_NAMESPACE} --ignore-not-found=true
-                        KUBECONFIG=${env.KUBECONFIG} kubectl delete -f k8s/service.yaml -n ${env.KUBE_NAMESPACE} --ignore-not-found=true
-                    """
-                } catch (Exception e) {
-                    echo "⚠️ Erreur lors du nettoyage: ${e.message}"
-                }
+                sh """
+                    docker stop ${env.CONTAINER_NAME} || true
+                    docker rm ${env.CONTAINER_NAME} || true
+                    kubectl --kubeconfig=${env.KUBECONFIG} delete -f k8s/deployment.yaml -n ${env.KUBE_NAMESPACE} --ignore-not-found=true || true
+                    kubectl --kubeconfig=${env.KUBECONFIG} delete -f k8s/service.yaml -n ${env.KUBE_NAMESPACE} --ignore-not-found=true || true
+                """
             }
         }
     }
