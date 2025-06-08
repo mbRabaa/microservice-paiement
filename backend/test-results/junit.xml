@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="jest tests" tests="5" failures="0" errors="0" time="1.69">
-  <testsuite name="Microservice Paiement" errors="0" failures="0" skipped="0" timestamp="2025-05-20T15:53:17" time="1.501" tests="5">
-    <testcase classname="Microservice Paiement GET /api/health devrait retourner 200 et le statut OK" name="Microservice Paiement GET /api/health devrait retourner 200 et le statut OK" time="0.071">
+<testsuites name="jest tests" tests="5" failures="0" errors="0" time="3.31">
+  <testsuite name="Microservice Paiement" errors="0" failures="0" skipped="0" timestamp="2025-06-08T16:54:07" time="2.992" tests="5">
+    <testcase classname="Microservice Paiement GET /api/health devrait retourner 200 et le statut OK" name="Microservice Paiement GET /api/health devrait retourner 200 et le statut OK" time="0.107">
     </testcase>
-    <testcase classname="Microservice Paiement POST /api/paiements devrait créer un paiement valide (201)" name="Microservice Paiement POST /api/paiements devrait créer un paiement valide (201)" time="0.064">
+    <testcase classname="Microservice Paiement POST /api/paiements devrait créer un paiement valide (201)" name="Microservice Paiement POST /api/paiements devrait créer un paiement valide (201)" time="0.115">
     </testcase>
-    <testcase classname="Microservice Paiement POST /api/paiements devrait refuser un montant invalide (400)" name="Microservice Paiement POST /api/paiements devrait refuser un montant invalide (400)" time="0.043">
+    <testcase classname="Microservice Paiement POST /api/paiements devrait refuser un montant invalide (400)" name="Microservice Paiement POST /api/paiements devrait refuser un montant invalide (400)" time="0.072">
     </testcase>
-    <testcase classname="Microservice Paiement POST /api/paiements devrait gérer les erreurs SQL (500)" name="Microservice Paiement POST /api/paiements devrait gérer les erreurs SQL (500)" time="0.09">
+    <testcase classname="Microservice Paiement POST /api/paiements devrait gérer les erreurs SQL (500)" name="Microservice Paiement POST /api/paiements devrait gérer les erreurs SQL (500)" time="0.176">
     </testcase>
-    <testcase classname="Microservice Paiement Gestion des erreurs devrait retourner 404 pour route inexistante" name="Microservice Paiement Gestion des erreurs devrait retourner 404 pour route inexistante" time="0.096">
+    <testcase classname="Microservice Paiement Gestion des erreurs devrait retourner 404 pour route inexistante" name="Microservice Paiement Gestion des erreurs devrait retourner 404 pour route inexistante" time="0.076">
     </testcase>
   </testsuite>
 </testsuites>
