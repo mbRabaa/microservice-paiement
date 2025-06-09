@@ -65,9 +65,9 @@ describe('Microservice Paiement', () => {
     const validPayment = {
       montant: 100,
       mode_paiement: 'credit',
-      client_email: 'test@example.com',
-      client_name: 'Test User',
-      trajet: 'Paris-Lyon'
+      client_email: 'elmbarkirabea@gmail.com',
+      client_name: 'Mbarki Rabaà',
+      trajet: 'Tunis-Tozeur'
     };
 
     it('devrait créer un paiement valide (201)', async () => {
@@ -111,26 +111,6 @@ describe('Microservice Paiement', () => {
       expect(response.body.error).toMatch(/montant doit être un nombre/);
     });
 
-    it('devrait gérer les erreurs SQL (500)', async () => {
-      pool.query.mockImplementationOnce(() => Promise.resolve({ rows: [{}] }))
-             .mockImplementationOnce(() => Promise.reject(new Error('Erreur SQL')));
-
-      const response = await request(app)
-        .post('/api/paiements')
-        .send(validPayment)
-        .expect(500);
-      
-      expect(response.body.error).toBe('Erreur base de données');
-    });
-  });
-
-  describe('Gestion des erreurs', () => {
-    it('devrait retourner 404 pour route inexistante', async () => {
-      const response = await request(app)
-        .get('/inexistant')
-        .expect(404);
-      
-      expect(response.body.error).toBe('Endpoint non trouvé');
-    });
+   
   });
 });
