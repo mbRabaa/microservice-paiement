@@ -142,16 +142,8 @@ pipeline {
                     """
                 }
             }
-           // post {
-             //   always {
-                    // Nettoyage - vous pouvez commenter ces lignes si vous voulez garder le conteneur
-                   // sh """
-                        //docker stop ${env.CONTAINER_NAME} || true
-                       // docker rm ${env.CONTAINER_NAME} || true
-                  //  """
-            ////    }
-          //  }
-     /   }
+           
+         }
         
         stage('Verify Kubernetes Access') {
             steps {
