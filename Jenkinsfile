@@ -107,6 +107,52 @@ pipeline {
             }
         }
         
+        stage('Deploy Docker Container') {
+            steps {
+                script {
+                    // Arrêter et supprimer le conteneur existant s'il existe
+                    sh """
+                        docker stop ${env.CONTAINER_NAME} || true
+                        docker rm ${env.CONTAINER_NAME} || true
+                    """
+                    
+                    // Lancer un nouveau conteneur
+                    sh """
+                        docker run -d \
+                            --name ${env.CONTAINER_NAME} \
+                            -p ${env.SERVICE_PORT}:${env.SERVICE_PORT} \
+                            -e NODE_ENV=production \
+                            ${env.DOCKER_REGISTRY}/${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+                    """
+                    
+                    // Vérifier que le conteneur est en cours d'exécution
+                    sh """
+                        echo "=== Liste des conteneurs ==="
+                        docker ps -a
+                        
+                        echo "=== Logs du conteneur ==="
+                        sleep 5
+                        docker logs ${env.CONTAINER_NAME} --tail 50
+                    """
+                    
+                    // Optionnel: faire un test de santé
+                    sh """
+                        echo "=== Test de santé ==="
+                        curl -I http://localhost:${env.SERVICE_PORT}/health || true
+                    """
+                }
+            }
+            post {
+                always {
+                    // Nettoyage - vous pouvez commenter ces lignes si vous voulez garder le conteneur
+                    sh """
+                        docker stop ${env.CONTAINER_NAME} || true
+                        docker rm ${env.CONTAINER_NAME} || true
+                    """
+                }
+            }
+        }
+        
         stage('Verify Kubernetes Access') {
             steps {
                 script {
